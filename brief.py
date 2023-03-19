@@ -1,18 +1,41 @@
 #!/usr/bin/env python3
 import sys
 
+# These do not count as valid sentence terminations
+# despite ending in a period.
 HONORIFICS = ["Dr.", "Mrs.", "Mr.", "Capt.", "Prof.", "Ms."]
+
+# Various ways sentences can end.
 TERMINATIONS = ['!', '?', ")\"", '"', ")”", '”', ']', '.’']
+
+# If it has parsed this many words without terminating a sentence,
+# discard it on the next '.' and start anew.
 MAX_SENTENCE_LEN_CAP = 500
+
+# How many sentences we should include in the summary.
+SUMMARY_SENTENCE_COUNT = 5
+
+# Don't score sentences shorter than this many words.
+MIN_SENTENCE_LEN = 6
+
+# Potentially endless list of exceptions can go here.
+# It should contain connectives, pronouns, prepositions, determiners, modal verbs.
+# Everything we're checking against this will be stripped of non alphas.
+IGNORE = ["the", "he", "her", "it", "there", "then", "my", "mine", "i", "you", "your", "yours",
+          "theyre", "its", "their", "when", "who", "but", "be", "because", "or", "his",
+          "hers", "theirs", "theres", "are", "arent", "been", "will", "wont", "by"]
 
 class Corpus:
     def __init__(self, file):
-        self.text = ""
-        self.sentences = []
+        self.sentences = {}
+        self.word_heatmap = {}
+        self.summary = ""
 
         print(f"parsing: {file}")
         with open(file, "r") as f:
             self.text = f.read()
+
+        self.tokens = self.text.split()
 
 
     def has_equal_pairs(self, sentence):
@@ -38,16 +61,14 @@ class Corpus:
 
     def populate_sentences(self):
         sentence = ""
-        sentences = []
-        tokens = self.text.split()
         index = 0
-        while index < len(tokens):
+        while index < len(self.tokens):
             # add a space if we have already started our sentence
             if sentence:
                 sentence += " "
 
             # add the current word
-            sentence += tokens[index]
+            sentence += self.tokens[index]
 
             # prep for the next word
             index += 1
@@ -79,7 +100,7 @@ class Corpus:
                     continue
 
                 # assume this period was a valid end of sentence.
-                sentences.append(sentence)
+                self.sentences[sentence] = 0
                 sentence = ""
                 continue
 
@@ -88,21 +109,66 @@ class Corpus:
             if any([sentence.endswith(i) for i in TERMINATIONS]):
                 if self.has_equal_pairs(sentence):
                     # valid termination
-                    sentences.append(sentence)
+                    self.sentences[sentence] = 0
                     sentence = ""
 
-            # anything unmatched is not a valid end of sentence.
 
-        self.sentences = sentences
+    def populate_word_heatmap(self):
+        for word in self.tokens:
+            sanitized_word = ''.join([i for i in word if i.isalpha()])
 
-    def run(self):
-        self.populate_sentences()
+            if sanitized_word in self.word_heatmap:
+                self.word_heatmap[sanitized_word] += 1
+                continue
 
+            # word is new to the heatmap
+            self.word_heatmap[sanitized_word] = 1
+
+
+    def score_sentences(self):
+        # get our sentences
         for sentence in self.sentences:
-            print(sentence)
+            # get the words in the sentence
+            split_sentence = sentence.split()
+            # only care about sentences longer than x.
+            if len(split_sentence) <= MIN_SENTENCE_LEN:
+                assert self.sentences[sentence] == 0
+                continue
+
+            for word in split_sentence:
+                sanitized_word = ''.join([i for i in word if i.isalpha()])
+                # get a score for our word
+                if sanitized_word in self.word_heatmap:
+                    # add points to our sentence
+                    self.sentences[sentence] += self.word_heatmap[sanitized_word]
+
+            # Divide the sentence score by the length of the sentence.
+            # A sentence shouldn't be automatically better because it's longer.
+            self.sentences[sentence] = self.sentences[sentence] / max(1, len(sentence))
+
+    def load_summary(self):
+        self.populate_sentences()
+        self.populate_word_heatmap()
+        self.score_sentences()
+
+        # sort our sentences by value
+        sorted_sentences = {
+            k: v for k, v in sorted(
+                self.sentences.items(),
+                key=lambda item: item[1]
+            )
+        }
+        # display our x best sentences
+        index = 0
+        sentences = list(sorted_sentences.keys())
+        while index < min(len(sentences), SUMMARY_SENTENCE_COUNT):
+            self.summary += sentences[index] + " "
+            index += 1
+        self.summary.strip()
 
 
 if __name__ == "__main__":
     arg = sys.argv[-1]
     corpus = Corpus(arg)
-    corpus.run()
+    corpus.load_summary()
+    print(corpus.summary)
