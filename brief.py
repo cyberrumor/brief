@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import sys
+import os
+import textwrap
 
 # These do not count as valid sentence terminations
 # despite ending in a period.
@@ -205,5 +207,5 @@ if __name__ == "__main__":
     corpus = Corpus(arg)
     corpus.load_summary()
     print()
-    print(corpus.summary)
-
+    print(textwrap.fill(corpus.summary, os.get_terminal_size()[0]))
+    print()
