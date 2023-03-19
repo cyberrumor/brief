@@ -10,7 +10,7 @@ TERMINATIONS = ['!', '?', ")\"", '"', ")”", '”', ']', '’', '’']
 
 # If it has parsed this many words without terminating a sentence,
 # discard it on the next '.' or termination and start anew.
-MAX_SENTENCE_LEN_CAP = 200
+MAX_SENTENCE_LEN_CAP = 225
 
 # How many sentences we should include in the summary.
 SUMMARY_SENTENCE_COUNT = 3
@@ -19,21 +19,18 @@ SUMMARY_SENTENCE_COUNT = 3
 MIN_SENTENCE_LEN = 4
 
 # How few words should be considered n in an ngram.
-MIN_N = 2
+MIN_N = 3
 
 # Max words that should be considered n in an ngram.
 # set to 0 to disable. Increasing this is computationally
 # expensive.
-MAX_N = 10
-
+MAX_N = 0
 
 
 
 # Verify settings are valid.
 if MAX_N != 0:
     assert MIN_N <= MAX_N, "MIN_N must be less than or equal to MAX_N"
-
-
 
 
 class Corpus:
@@ -92,7 +89,6 @@ class Corpus:
                 # print something so we can try to prevent this thing in the future.
                 if len(sentence) > MAX_SENTENCE_LEN_CAP:
                     # print("we found a sentence that we were going to parse forever:")
-                    # print(sentence)
                     sentence = ""
                     continue
 
@@ -129,7 +125,7 @@ class Corpus:
 
     def populate_ngram_model(self):
         for i, sentence in enumerate(self.sentences):
-            print(f"loading ngram markov model: {int((i / len(self.sentences)) * 100)}%",
+            print(f"loading ngram markov model: {int(((i+1) / len(self.sentences)) * 100)}%",
                   end = "\r", flush=True)
             sanitized_sentence = ''.join([i for i in sentence if i.isalpha() or i == ' ']).split()
             self.sentences[sentence]['sanitized'] = sanitized_sentence
@@ -138,9 +134,11 @@ class Corpus:
                 continue
 
             self.sentences[sentence]['ngrams'] = set()
+
+            max_ngram_sample = len(sanitized_sentence) if MAX_N == 0 else MAX_N
             for index in range(len(sanitized_sentence)):
                 n = index + MIN_N
-                while n < min(len(sanitized_sentence), MAX_N):
+                while n < min(len(sanitized_sentence), max_ngram_sample):
                     ngram_slice = sanitized_sentence[index:n]
                     ngram = ' '.join(ngram_slice)
                     if ngram in self.ngram_model:
@@ -200,4 +198,6 @@ if __name__ == "__main__":
     arg = sys.argv[-1]
     corpus = Corpus(arg)
     corpus.load_summary()
+    print()
     print(corpus.summary)
+
