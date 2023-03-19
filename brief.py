@@ -13,19 +13,24 @@ TERMINATIONS = ['!', '?', ")\"", '"', ")”", '”', ']', '’', '’']
 MAX_SENTENCE_LEN_CAP = 225
 
 # How many sentences we should include in the summary.
-SUMMARY_SENTENCE_COUNT = 3
+SUMMARY_SENTENCE_COUNT = 5
 
 # Don't score sentences shorter than this many words.
 MIN_SENTENCE_LEN = 4
 
 # How few words should be considered n in an ngram.
+# Sentences with fewer words than this number are
+# disqualified.
 MIN_N = 3
 
 # Max words that should be considered n in an ngram.
-# set to 0 to disable. Increasing this is computationally
-# expensive.
-MAX_N = 0
-
+# set to 0 to disable. Disabling or increasing this
+# improves accuracy in cases where sentences are
+# generally the same length as each other,
+# but otherwise just increases computational expense.
+# Disabling this will cause longer sentences to be
+# scored unnaturally high.
+MAX_N = 10
 
 
 # Verify settings are valid.
@@ -125,8 +130,8 @@ class Corpus:
 
     def populate_ngram_model(self):
         for i, sentence in enumerate(self.sentences):
-            print(f"loading ngram markov model: {int(((i+1) / len(self.sentences)) * 100)}%",
-                  end = "\r", flush=True)
+            # print(f"loading ngram markov model: {int(((i+1) / len(self.sentences)) * 100)}%",
+            #      end = "\r", flush=True)
             sanitized_sentence = ''.join([i for i in sentence if i.isalpha() or i == ' ']).split()
             self.sentences[sentence]['sanitized'] = sanitized_sentence
             # if we sanitized it into blankness, don't try to process it.
@@ -135,12 +140,13 @@ class Corpus:
 
             self.sentences[sentence]['ngrams'] = set()
 
-            max_ngram_sample = len(sanitized_sentence) if MAX_N == 0 else MAX_N
+            max_ngram_sample = len(sanitized_sentence) if MAX_N == 0 else MAX_N + 1
             for index in range(len(sanitized_sentence)):
                 n = index + MIN_N
                 while n < min(len(sanitized_sentence), max_ngram_sample):
                     ngram_slice = sanitized_sentence[index:n]
                     ngram = ' '.join(ngram_slice)
+                    # print(ngram)
                     if ngram in self.ngram_model:
                         self.ngram_model[ngram] += 1
                         n += 1
