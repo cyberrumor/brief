@@ -6,29 +6,40 @@ import sys
 HONORIFICS = ["Dr.", "Mrs.", "Mr.", "Capt.", "Prof.", "Ms."]
 
 # Various ways sentences can end.
-TERMINATIONS = ['!', '?', ")\"", '"', ")”", '”', ']', '.’']
+TERMINATIONS = ['!', '?', ")\"", '"', ")”", '”', ']', '’', '’']
 
 # If it has parsed this many words without terminating a sentence,
-# discard it on the next '.' and start anew.
-MAX_SENTENCE_LEN_CAP = 500
+# discard it on the next '.' or termination and start anew.
+MAX_SENTENCE_LEN_CAP = 200
 
 # How many sentences we should include in the summary.
-SUMMARY_SENTENCE_COUNT = 5
+SUMMARY_SENTENCE_COUNT = 3
 
 # Don't score sentences shorter than this many words.
-MIN_SENTENCE_LEN = 6
+MIN_SENTENCE_LEN = 4
 
-# Potentially endless list of exceptions can go here.
-# It should contain connectives, pronouns, prepositions, determiners, modal verbs.
-# Everything we're checking against this will be stripped of non alphas.
-IGNORE = ["the", "he", "her", "it", "there", "then", "my", "mine", "i", "you", "your", "yours",
-          "theyre", "its", "their", "when", "who", "but", "be", "because", "or", "his",
-          "hers", "theirs", "theres", "are", "arent", "been", "will", "wont", "by"]
+# How few words should be considered n in an ngram.
+MIN_N = 2
+
+# Max words that should be considered n in an ngram.
+# set to 0 to disable. Increasing this is computationally
+# expensive.
+MAX_N = 10
+
+
+
+
+# Verify settings are valid.
+if MAX_N != 0:
+    assert MIN_N <= MAX_N, "MIN_N must be less than or equal to MAX_N"
+
+
+
 
 class Corpus:
     def __init__(self, file):
         self.sentences = {}
-        self.word_heatmap = {}
+        self.ngram_model = {}
         self.summary = ""
 
         print(f"parsing: {file}")
@@ -82,7 +93,6 @@ class Corpus:
                 if len(sentence) > MAX_SENTENCE_LEN_CAP:
                     # print("we found a sentence that we were going to parse forever:")
                     # print(sentence)
-                    # exit()
                     sentence = ""
                     continue
 
@@ -100,70 +110,89 @@ class Corpus:
                     continue
 
                 # assume this period was a valid end of sentence.
-                self.sentences[sentence] = 0
+                self.sentences[sentence] = {}
                 sentence = ""
                 continue
 
             # Identify sentences ending in valid punctuation, attention to
             # quotes used for dialogue.
             if any([sentence.endswith(i) for i in TERMINATIONS]):
+                if len(sentence) > MAX_SENTENCE_LEN_CAP:
+                    sentence = ""
+                    continue
+
                 if self.has_equal_pairs(sentence):
                     # valid termination
-                    self.sentences[sentence] = 0
+                    self.sentences[sentence] = {}
                     sentence = ""
 
 
-    def populate_word_heatmap(self):
-        for word in self.tokens:
-            sanitized_word = ''.join([i for i in word if i.isalpha()])
-
-            if sanitized_word in self.word_heatmap:
-                self.word_heatmap[sanitized_word] += 1
+    def populate_ngram_model(self):
+        for i, sentence in enumerate(self.sentences):
+            print(f"loading ngram markov model: {int((i / len(self.sentences)) * 100)}%",
+                  end = "\r", flush=True)
+            sanitized_sentence = ''.join([i for i in sentence if i.isalpha() or i == ' ']).split()
+            self.sentences[sentence]['sanitized'] = sanitized_sentence
+            # if we sanitized it into blankness, don't try to process it.
+            if not sanitized_sentence:
                 continue
 
-            # word is new to the heatmap
-            self.word_heatmap[sanitized_word] = 1
+            self.sentences[sentence]['ngrams'] = set()
+            for index in range(len(sanitized_sentence)):
+                n = index + MIN_N
+                while n < min(len(sanitized_sentence), MAX_N):
+                    ngram_slice = sanitized_sentence[index:n]
+                    ngram = ' '.join(ngram_slice)
+                    if ngram in self.ngram_model:
+                        self.ngram_model[ngram] += 1
+                        n += 1
+                        continue
+                    self.ngram_model[ngram] = 1
+                    self.sentences[sentence]['ngrams'].add(ngram)
+                    n += 1
 
-
-    def score_sentences(self):
-        # get our sentences
+        # Score our sentences
         for sentence in self.sentences:
-            # get the words in the sentence
-            split_sentence = sentence.split()
-            # only care about sentences longer than x.
-            if len(split_sentence) <= MIN_SENTENCE_LEN:
-                assert self.sentences[sentence] == 0
+            self.sentences[sentence]['score'] = 0
+
+            if len(self.sentences[sentence]['sanitized']) <= MIN_SENTENCE_LEN:
+                # print(f"skipping {sentence} ")
                 continue
 
-            for word in split_sentence:
-                sanitized_word = ''.join([i for i in word if i.isalpha()])
-                # get a score for our word
-                if sanitized_word in self.word_heatmap:
-                    # add points to our sentence
-                    self.sentences[sentence] += self.word_heatmap[sanitized_word]
+            for ngram in self.sentences[sentence]['ngrams']:
+                score = self.ngram_model.get(ngram, 0)
+                self.sentences[sentence]['score'] += score
 
-            # Divide the sentence score by the length of the sentence.
-            # A sentence shouldn't be automatically better because it's longer.
-            self.sentences[sentence] = self.sentences[sentence] / max(1, len(sentence))
+            # penalize run-on sentences
+            score = self.sentences[sentence]['score']
+            score //= max(1, sum([sentence.count(i) for i in [',', ':', ';']]))
+            self.sentences[sentence]['score'] = score
+
 
     def load_summary(self):
         self.populate_sentences()
-        self.populate_word_heatmap()
-        self.score_sentences()
+        self.populate_ngram_model()
 
         # sort our sentences by value
         sorted_sentences = {
             k: v for k, v in sorted(
                 self.sentences.items(),
-                key=lambda item: item[1]
+                key=lambda item: item[1]['score'],
+                reverse = True
             )
         }
         # display our x best sentences
         index = 0
         sentences = list(sorted_sentences.keys())
+        summary = []
         while index < min(len(sentences), SUMMARY_SENTENCE_COUNT):
-            self.summary += sentences[index] + " "
+            summary.append(sentences[index])
             index += 1
+
+        # put the summary sentences in their original chronological order.
+        for sentence in self.sentences:
+            if sentence in summary:
+                self.summary += sentence + " "
         self.summary.strip()
 
 
